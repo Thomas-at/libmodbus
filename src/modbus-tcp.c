@@ -169,6 +169,16 @@ static ssize_t _modbus_tcp_send(modbus_t *ctx, const uint8_t *req, int req_lengt
     return send(ctx->s, (const char *)req, req_length, MSG_NOSIGNAL);
 }
 
+static ssize_t _modbus_tcp_send_async(modbus_t *ctx, const uint8_t *req, int req_length)
+{
+		ctx->send_length = req_length;
+		ctx->send_ptr = req;
+		if(ctx->add_watch_cb)
+			ctx->add_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
+		/* always succeeds at the moment */
+		return 0;
+}
+
 static int _modbus_tcp_receive(modbus_t *ctx, uint8_t *req) {
     return _modbus_receive_msg(ctx, req, MSG_INDICATION);
 }
@@ -293,6 +303,101 @@ static int _connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen,
             return -1;
         }
     }
+    return rc;
+}
+
+/* starts a connection asynchronously. Returns 0 if started OK, non-zero if error */
+static int _connect_async(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
+{
+    int rc = connect(sockfd, addr, addrlen);
+
+#ifdef OS_WIN32
+    int wsaError = 0;
+    if (rc == -1) {
+        wsaError = WSAGetLastError();
+    }
+
+    if (wsaError == WSAEWOULDBLOCK || wsaError == WSAEINPROGRESS) {
+#else
+    if (rc == -1 && errno == EINPROGRESS) {
+#endif
+			return 0;
+    }
+    return rc;
+}
+
+/* at this point select() has fired on a socket waiting for connection */
+static int _select_connect(modbus_t *ctx) {
+    int rc;
+    int optval;
+    socklen_t optlen = sizeof(optval);
+
+		/* we're no longer interested in the socket becoming writable */
+    if(ctx->remove_watch_cb)
+     	ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
+
+    /* The connection is established if SO_ERROR and optval are set to 0 */
+    rc = getsockopt(ctx->s, SOL_SOCKET, SO_ERROR, (void *)&optval, &optlen);
+    if (rc == 0 && optval == 0) {
+        return 0;
+    } else {
+        errno = ECONNREFUSED;
+        return -1;
+    }	
+}
+
+/* Establishes a modbus TCP connection with a Modbus server. */
+static int _modbus_tcp_connect_async(modbus_t *ctx)
+{
+    int rc;
+    /* Specialized version of sockaddr for Internet socket address (same size) */
+    struct sockaddr_in addr;
+    modbus_tcp_t *ctx_tcp = ctx->backend_data;
+    int flags = SOCK_STREAM;
+
+#ifdef OS_WIN32
+    if (_modbus_tcp_init_win32() == -1) {
+        return -1;
+    }
+#endif
+
+#ifdef SOCK_CLOEXEC
+    flags |= SOCK_CLOEXEC;
+#endif
+
+#ifdef SOCK_NONBLOCK
+    flags |= SOCK_NONBLOCK;
+#endif
+
+    ctx->s = socket(PF_INET, flags, 0);
+    if (ctx->s == -1) {
+        return -1;
+    }
+
+    rc = _modbus_tcp_set_ipv4_options(ctx->s);
+    if (rc == -1) {
+        close(ctx->s);
+        ctx->s = -1;
+        return -1;
+    }
+
+    if (ctx->debug) {
+        printf("Connecting to %s:%d\n", ctx_tcp->ip, ctx_tcp->port);
+    }
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(ctx_tcp->port);
+    addr.sin_addr.s_addr = inet_addr(ctx_tcp->ip);
+    if(ctx->add_watch_cb)
+    	ctx->add_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
+    rc = _connect_async(ctx->s, (struct sockaddr *)&addr, sizeof(addr));
+    if (rc == -1) {
+    		if(ctx->remove_watch_cb)
+    			ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
+        close(ctx->s);
+        ctx->s = -1;
+    }
+
     return rc;
 }
 
@@ -732,6 +837,88 @@ static void _modbus_tcp_free(modbus_t *ctx) {
     free(ctx);
 }
 
+static int _modbus_tcp_start_receive_msg_async(modbus_t *ctx) {
+	if(ctx->s == 0 || ctx->s == -1)
+		return -1;
+		
+	if(ctx->add_watch_cb)
+		ctx->add_watch_cb(ctx, ctx->s, MODBUS_SELECT_READ);
+	return 0;
+}
+
+static int _modbus_tcp_stop_receive_msg_async(modbus_t *ctx) {
+	if(ctx->s == 0 || ctx->s == -1)
+		return -1;
+		
+	if(ctx->remove_watch_cb)
+		ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_READ);
+	return 0;
+}
+
+static int _modbus_tcp_listen_async(modbus_t *ctx, int nb_connection) {
+	ctx->listen_s = modbus_tcp_listen(ctx, nb_connection);
+	
+	if(ctx->listen_s != -1) {
+		if(ctx->add_watch_cb)
+			ctx->add_watch_cb(ctx, ctx->listen_s, MODBUS_SELECT_READ);
+	}
+	return ctx->listen_s;
+}
+
+static int _modbus_tcp_selected(modbus_t *ctx, int fd, int flags) {
+	int retval = 0;
+	
+	if (fd == ctx->listen_s) {
+		if(ctx->async_state == ASYNC_STATE_LISTENING) {
+			if(modbus_tcp_accept(ctx,&(ctx->listen_s))== -1) {
+				retval = -1;
+			}
+		} else {
+			retval = -1;
+		}
+	}
+	if (fd == ctx->s) {
+		switch(ctx->async_state) {
+			case ASYNC_STATE_CONNECTING:
+				retval = _select_connect(ctx);
+				break;
+			case ASYNC_STATE_SENDING_REQUEST:
+			case ASYNC_STATE_SENDING_RESPONSE:
+				if(flags & MODBUS_SELECT_WRITE) {
+					retval = _modbus_tcp_send(ctx, ctx->send_ptr, ctx->send_length);
+					if(ctx->remove_watch_cb)
+						ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
+				}
+				break;
+			case ASYNC_STATE_RECEIVING_INDICATION:
+			case ASYNC_STATE_RECEIVING_CONFIRMATION:
+				break;
+			default:
+				break;
+		}
+	}
+		
+	return retval;
+}
+
+static void _modbus_tcp_select_timeout(modbus_t *ctx, int fd) {
+	switch(ctx->async_state) {
+		case ASYNC_STATE_CONNECTING:
+		case ASYNC_STATE_SENDING_REQUEST:
+		case ASYNC_STATE_SENDING_RESPONSE:
+	    if(ctx->remove_watch_cb)
+	     	ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
+			break;
+		case ASYNC_STATE_RECEIVING_INDICATION:
+		case ASYNC_STATE_RECEIVING_CONFIRMATION:
+	    if(ctx->remove_watch_cb)
+	     	ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_READ);
+			break;
+		default:
+			break;
+	}
+}
+
 const modbus_backend_t _modbus_tcp_backend = {
     _MODBUS_BACKEND_TYPE_TCP,
     _MODBUS_TCP_HEADER_LENGTH,
@@ -751,7 +938,14 @@ const modbus_backend_t _modbus_tcp_backend = {
     _modbus_tcp_close,
     _modbus_tcp_flush,
     _modbus_tcp_select,
-    _modbus_tcp_free
+    _modbus_tcp_free,
+    _modbus_tcp_connect_async,
+    _modbus_tcp_send_async,
+    _modbus_tcp_start_receive_msg_async,
+    _modbus_tcp_stop_receive_msg_async,
+    _modbus_tcp_listen_async,
+    _modbus_tcp_selected,
+    _modbus_tcp_select_timeout
 };
 
 

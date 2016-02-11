@@ -30,15 +30,6 @@ const unsigned int libmodbus_version_major = LIBMODBUS_VERSION_MAJOR;
 const unsigned int libmodbus_version_minor = LIBMODBUS_VERSION_MINOR;
 const unsigned int libmodbus_version_micro = LIBMODBUS_VERSION_MICRO;
 
-/* Max between RTU and TCP max adu length (so TCP) */
-#define MAX_MESSAGE_LENGTH 260
-
-/* 3 steps are used to parse the query */
-typedef enum {
-    _STEP_FUNCTION,
-    _STEP_META,
-    _STEP_DATA
-} _step_t;
 
 const char *modbus_strerror(int errnum) {
     switch (errnum) {
@@ -348,7 +339,7 @@ int _modbus_receive_msg(modbus_t *ctx, uint8_t *msg, msg_type_t msg_type)
 
     if (ctx->debug) {
         if (msg_type == MSG_INDICATION) {
-            printf("Waiting for a indication...\n");
+            printf("Waiting for an indication...\n");
         } else {
             printf("Waiting for a confirmation...\n");
         }
@@ -677,9 +668,9 @@ static int response_exception(modbus_t *ctx, sft_t *sft,
    If an error occurs, this function construct the response
    accordingly.
 */
-int modbus_reply(modbus_t *ctx, const uint8_t *req,
-                 int req_length, modbus_mapping_t *mb_mapping)
-{
+static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_length,
+											uint8_t *rsp, modbus_mapping_t *mb_mapping) {
+
     int offset;
     int slave;
     int function;
@@ -1081,6 +1072,20 @@ int modbus_reply(modbus_t *ctx, const uint8_t *req,
         break;
     }
 
+    return rsp_length;
+}
+
+/* Send a response to the received request.
+*/
+int modbus_reply(modbus_t *ctx, const uint8_t *req,
+                 int req_length, modbus_mapping_t *mb_mapping)
+{
+    uint8_t rsp[MAX_MESSAGE_LENGTH];
+		int rsp_length;
+	int slave = req[offset - 1];
+		    
+    rsp_length = _modbus_compose_reply(ctx, req, req_length, rsp, mb_mapping);
+    
     /* Suppress any responses when the request was a broadcast */
     return (slave == MODBUS_BROADCAST_ADDRESS) ? 0 : send_msg(ctx, rsp, rsp_length);
 }
@@ -1658,6 +1663,17 @@ void _modbus_init_common(modbus_t *ctx)
 
     ctx->byte_timeout.tv_sec = 0;
     ctx->byte_timeout.tv_usec = _BYTE_TIMEOUT;
+    
+    /* initialise async state machine */
+    ctx->async_state = ASYNC_STATE_DISCONNECTED;
+    ctx->async_rw = ASYNC_READ;
+    ctx->listen_s = -1;
+    ctx->connected_cb = NULL;
+    ctx->read_cb = NULL;
+    ctx->write_cb = NULL;
+    ctx->indication_cb = NULL;
+    ctx->add_watch_cb = NULL;
+    ctx->remove_watch_cb = NULL;
 }
 
 /* Define the slave number */
@@ -1802,6 +1818,464 @@ int modbus_set_debug(modbus_t *ctx, int flag)
 
     ctx->debug = flag;
     return 0;
+}
+
+/**
+ * ASYNC FUNCTIONS
+ **/
+ 
+void modbus_set_connected_cb(modbus_t *ctx, connected_cb_t cb) {
+	ctx->connected_cb = cb;
+}
+
+void modbus_set_read_cb(modbus_t *ctx, read_cb_t cb){
+	ctx->read_cb = cb;
+}
+
+void modbus_set_write_cb(modbus_t *ctx, write_cb_t cb){
+	ctx->write_cb = cb;
+}
+
+void modbus_set_indication_cb(modbus_t *ctx, indication_cb_t cb){
+	ctx->indication_cb = cb;
+}
+
+void modbus_set_add_watch_cb(modbus_t *ctx, add_watch_cb_t cb) {
+	ctx->add_watch_cb = cb;
+}
+
+void modbus_set_remove_watch_cb(modbus_t *ctx, remove_watch_cb_t cb){
+	ctx->remove_watch_cb = cb;
+}
+int modbus_connect_async(modbus_t *ctx) {
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+		if(ctx->async_state != ASYNC_STATE_DISCONNECTED) {
+			errno = EBUSY;
+			return -1;
+		}
+    if(ctx->backend->connect_async(ctx)) {
+    	/* the attempt to connect failed */
+      ctx->async_state = ASYNC_STATE_DISCONNECTED;
+      return -1;
+    } else {
+      ctx->async_state = ASYNC_STATE_CONNECTING;
+      return 0;
+    }
+}
+
+int modbus_listen_async(modbus_t *ctx, int nb_connection) {
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+		if(ctx->async_state != ASYNC_STATE_DISCONNECTED) {
+			errno = EBUSY;
+			return -1;
+		}
+    if(ctx->backend->listen_async(ctx, nb_connection) == -1) {
+    	/* the attempt to connect failed */
+      ctx->async_state = ASYNC_STATE_DISCONNECTED;
+      return -1;
+    } else {
+      ctx->async_state = ASYNC_STATE_LISTENING;
+      return 0;
+    }
+}
+
+/* Sends a request/response */
+static int send_msg_async(modbus_t *ctx, uint8_t *msg, int msg_length)
+{
+    int rc;
+    int i;
+
+    msg_length = ctx->backend->send_msg_pre(msg, msg_length);
+
+    if (ctx->debug) {
+    		printf("send_msg_async(): state %d: ",ctx->async_state);
+        for (i = 0; i < msg_length; i++)
+            printf("[%.2X]", msg[i]);
+        printf("\n");
+    }
+
+    rc = ctx->backend->send_async(ctx, msg, msg_length);
+    if (rc == -1) {
+      _error_print(ctx, NULL);
+		}
+
+    return rc;
+}
+
+/* Reads the data from a remove device and put that data into an array */
+static int read_registers_async(modbus_t *ctx, int function, int addr, int nb,
+                          uint16_t *dest)
+{
+    int rc;
+
+    if (nb > MODBUS_MAX_READ_REGISTERS) {
+        if (ctx->debug) {
+            fprintf(stderr,
+                    "ERROR Too many registers requested (%d > %d)\n",
+                    nb, MODBUS_MAX_READ_REGISTERS);
+        }
+        errno = EMBMDATA;
+        return -1;
+    }
+
+    ctx->req_length = ctx->backend->build_request_basis(ctx, function, addr, nb, ctx->req);
+		ctx->dest = dest;
+		ctx->async_state = ASYNC_STATE_SENDING_REQUEST;
+		ctx->async_rw = ASYNC_READ;
+    rc = send_msg_async(ctx, ctx->req, ctx->req_length);
+    
+    return rc;
+}
+
+
+/* Reads the holding registers of remote device and put the data into an
+   array */
+int modbus_read_registers_async(modbus_t *ctx, int addr, int nb, uint16_t *dest)
+{
+    int status;
+
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ctx->async_state < ASYNC_STATE_CONNECTED) {
+    	errno = ENOTCONN;
+    	return -1;
+    }
+    if(ctx->async_state > ASYNC_STATE_CONNECTED) {
+    	errno = EBUSY;
+    	return -1;
+    }
+
+    if (nb > MODBUS_MAX_READ_REGISTERS) {
+        if (ctx->debug) {
+            fprintf(stderr,
+                    "ERROR Too many registers requested (%d > %d)\n",
+                    nb, MODBUS_MAX_READ_REGISTERS);
+        }
+        errno = EMBMDATA;
+        return -1;
+    }
+
+    status = read_registers_async(ctx, MODBUS_FC_READ_HOLDING_REGISTERS,
+                            addr, nb, dest);
+    return status;
+}
+
+/* Write the values from the array to the registers of the remote device */
+int modbus_write_registers_async(modbus_t *ctx, int addr, int nb, const uint16_t *src)
+{
+    int i, byte_count;
+
+    if (ctx == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ctx->async_state < ASYNC_STATE_CONNECTED) {
+    	errno = ENOTCONN;
+    	return -1;
+    }
+    if(ctx->async_state > ASYNC_STATE_CONNECTED) {
+    	errno = EBUSY;
+    	return -1;
+    }
+
+    if (nb > MODBUS_MAX_WRITE_REGISTERS) {
+        if (ctx->debug) {
+            fprintf(stderr,
+                    "ERROR Too many write registers requested (%d > %d)\n",
+                    nb, MODBUS_MAX_WRITE_REGISTERS);
+        }
+        errno = EMBMDATA;
+        return -1;
+    }
+
+    ctx->req_length = ctx->backend->build_request_basis(ctx,
+                                                   MODBUS_FC_WRITE_MULTIPLE_REGISTERS,
+                                                   addr, nb, ctx->req);
+    byte_count = nb * 2;
+    ctx->req[ctx->req_length++] = byte_count;
+
+    for (i = 0; i < nb; i++) {
+        ctx->req[ctx->req_length++] = src[i] >> 8;
+        ctx->req[ctx->req_length++] = src[i] & 0x00FF;
+    }
+
+		ctx->async_state = ASYNC_STATE_SENDING_REQUEST;
+		ctx->async_rw = ASYNC_WRITE;
+    return send_msg_async(ctx, ctx->req, ctx->req_length);
+}
+
+static int _modbus_reply_async(modbus_t *ctx, const uint8_t *req, int req_length, modbus_mapping_t *mb_mapping) {
+		int rsp_length;
+		    
+    rsp_length = _modbus_compose_reply(ctx, req, req_length, ctx->rsp, mb_mapping);
+    
+		ctx->async_state = ASYNC_STATE_SENDING_RESPONSE;
+		ctx->async_rw = ASYNC_WRITE;
+    return send_msg_async(ctx, ctx->rsp, rsp_length);	
+}
+
+static int _modbus_start_receive_msg_async(modbus_t *ctx, uint8_t *msg, msg_type_t msg_type)
+{
+    if (ctx->debug) {
+        if (msg_type == MSG_INDICATION) {
+            printf("Waiting for an indication...\n");
+        } else {
+            printf("Waiting for a confirmation...\n");
+        }
+    }
+
+    /* We need to analyse the message step by step.  At the first step, we want
+     * to reach the function code because all packets contain this
+     * information. */
+    ctx->msg_type = msg_type;
+    ctx->step = _STEP_FUNCTION;
+    ctx->msg_length = 0;
+    ctx->length_to_read = ctx->backend->header_length + 1;
+    ctx->recv_ptr = msg;
+
+    if (msg_type == MSG_INDICATION) {
+        /* Wait for a message, we don't know when the message will be
+         * received */
+    } else {
+    }
+
+		return ctx->backend->start_receive_msg_async(ctx);
+}
+
+static int _modbus_update_receive_msg_async(modbus_t *ctx)
+{
+    int rc;
+ 
+    if (ctx->length_to_read != 0) {
+
+        rc = ctx->backend->recv(ctx, ctx->recv_ptr + ctx->msg_length, ctx->length_to_read);
+        if (rc == 0) {
+            errno = ECONNRESET;
+            rc = -1;
+        }
+
+        if (rc == -1) {
+            _error_print(ctx, "read");
+ 			     ctx->backend->stop_receive_msg_async(ctx);
+            return -1;
+        }
+
+        /* Display the hex code of each character received */
+        if (ctx->debug) {
+            int i;
+            printf("Step %d ",ctx->step);
+            for (i=0; i < rc; i++)
+                printf("<%.2X>", ctx->recv_ptr[ctx->msg_length + i]);
+        }
+
+        /* Sums bytes received */
+        ctx->msg_length += rc;
+        /* Computes remaining bytes */
+        ctx->length_to_read -= rc;
+
+        if (ctx->length_to_read == 0) {
+            switch (ctx->step) {
+            case _STEP_FUNCTION:
+                /* Function code position */
+                ctx->length_to_read = compute_meta_length_after_function(
+                    ctx->recv_ptr[ctx->backend->header_length],
+                    ctx->msg_type);
+                if (ctx->length_to_read != 0) {
+                    ctx->step = _STEP_META;
+                    break;
+                } /* else switches straight to the next step */
+            case _STEP_META:
+                ctx->length_to_read = compute_data_length_after_meta(
+                    ctx, ctx->recv_ptr, ctx->msg_type);
+                if ((ctx->msg_length + ctx->length_to_read) > (int)ctx->backend->max_adu_length) {
+                    errno = EMBBADDATA;
+                    _error_print(ctx, "too many data");
+                    return -1;
+                }
+               	ctx->step = _STEP_DATA;
+                if(ctx->length_to_read > 0)
+                	break;
+								/* else falls through */
+            case _STEP_DATA:
+            		/* we've got all the data now */
+						    if (ctx->debug)
+						        printf("\n");
+						     ctx->backend->stop_receive_msg_async(ctx);
+						    /* should return 0 if message is OK */
+						    return !(ctx->backend->check_integrity(ctx, ctx->recv_ptr, ctx->msg_length));
+            		break;
+            default:
+                break;
+            }
+        }
+    }
+    /* positive return value means everything's OK */
+    return 1;
+}
+
+static void _modbus_read_write_cb(modbus_t *ctx, int status) {
+	switch(ctx->async_rw) {
+		case ASYNC_READ:
+			if(ctx->read_cb)
+				ctx->read_cb(ctx,status);
+			break;
+		case ASYNC_WRITE:
+			if(ctx->write_cb)
+				ctx->write_cb(ctx,status);
+			break;
+	}
+}
+
+void modbus_selected(modbus_t *ctx, int fd, int flag) {
+	int retval;
+	
+  if (ctx == NULL) {
+      errno = EINVAL;
+      return;
+  }
+
+	if(ctx->debug) {
+		printf("modbus_selected() state %d fd %d flag %d\n",ctx->async_state,fd,flag);
+	}
+	retval = ctx->backend->selected(ctx, fd, flag);
+	
+	switch(ctx->async_state) {
+		case ASYNC_STATE_LISTENING:
+			if(retval) {
+			} else {
+    		ctx->async_state = ASYNC_STATE_RECEIVING_INDICATION;
+	    	if(_modbus_start_receive_msg_async(ctx, ctx->req, MSG_INDICATION)) {
+	        /* should handle the error here, probably disconnect */
+	    		ctx->async_state = ASYNC_STATE_LISTENING;
+	    	}
+			}
+			break;
+		case ASYNC_STATE_CONNECTING:
+			if(retval) {
+    		ctx->async_state = ASYNC_STATE_DISCONNECTED;
+			} else {
+    		ctx->async_state = ASYNC_STATE_CONNECTED;
+			}
+			if(ctx->connected_cb)
+				ctx->connected_cb(ctx,retval);
+			break;
+			/* for sending, at this point the backend will have done the actual send */
+			/* and retval will contain the number of bytes sent or -1 for error */
+		case ASYNC_STATE_SENDING_REQUEST:
+			if(retval == -1) {
+        _error_print(ctx, NULL);
+        _modbus_read_write_cb(ctx,-1);
+      }
+	    if (retval > 0 && retval != ctx->req_length) {
+	      errno = EMBBADDATA;
+        _modbus_read_write_cb(ctx,-1);
+	    }
+	    if (retval == ctx->req_length) {
+	    	/* sent ok, now start waiting for reply */
+    		ctx->async_state = ASYNC_STATE_RECEIVING_CONFIRMATION;
+	    	if(_modbus_start_receive_msg_async(ctx, ctx->rsp, MSG_CONFIRMATION)) {
+	        _modbus_read_write_cb(ctx,-1);
+	        /* should handle the error here, probably disconnect */
+	    		ctx->async_state = ASYNC_STATE_CONNECTED;
+	    	}
+	    }
+	    break;
+		case ASYNC_STATE_SENDING_RESPONSE:
+			/* assume the client is still connected so we're ready for another indication */
+  		ctx->async_state = ASYNC_STATE_RECEIVING_INDICATION;
+    	if(_modbus_start_receive_msg_async(ctx, ctx->req, MSG_INDICATION)) {
+    		ctx->async_state = ASYNC_STATE_LISTENING;
+    	}
+	   	break;
+		case ASYNC_STATE_RECEIVING_INDICATION:
+			retval = _modbus_update_receive_msg_async(ctx);
+			if(retval < 0) {
+				if(ECONNRESET == errno) {
+					ctx->backend->stop_receive_msg_async(ctx);
+	  			ctx->async_state = ASYNC_STATE_DISCONNECTED;
+				} else {
+	  			ctx->async_state = ASYNC_STATE_LISTENING;
+	  		}
+	  		break;
+			}
+			if(!retval) {
+				/* reception complete */
+    		if(ctx->backend->check_integrity(ctx, ctx->req, ctx->msg_length) != -1) {
+    			/* complete indication is now in ctx->req, so tell the client */
+    			if(ctx->indication_cb) {
+    				modbus_mapping_t *map = ctx->indication_cb(ctx, ctx->req, ctx->msg_length);
+    				retval = _modbus_reply_async(ctx, ctx->req, ctx->msg_length, map);
+					}
+    		}
+			}
+			break;
+		case ASYNC_STATE_RECEIVING_CONFIRMATION:
+			retval = _modbus_update_receive_msg_async(ctx);
+			if(retval < 0) {
+				if(ECONNRESET == errno) {
+					ctx->backend->stop_receive_msg_async(ctx);
+	  			ctx->async_state = ASYNC_STATE_DISCONNECTED;
+				} else {
+		  		ctx->async_state = ASYNC_STATE_CONNECTED;
+				}
+	      _modbus_read_write_cb(ctx,-1);
+			}
+			if(!retval) {
+				int offset, i;
+				/* reception complete */
+        ctx->async_state = ASYNC_STATE_CONNECTED;
+        retval = check_confirmation(ctx, ctx->req, ctx->rsp, ctx->msg_length);
+        if(retval == -1) {
+	        _modbus_read_write_cb(ctx,-1);
+        } else {
+	        offset = ctx->backend->header_length;
+					if(ctx->async_rw == ASYNC_READ) {
+		        for (i = 0; i < retval; i++) {
+		            /* shift reg hi_byte to temp OR with lo_byte */
+		            ctx->dest[i] = (ctx->rsp[offset + 2 + (i << 1)] << 8) |
+		                ctx->rsp[offset + 3 + (i << 1)];
+		        }
+		      }
+	        _modbus_read_write_cb(ctx,0);
+	      }
+			}		
+			break;
+		default:
+			break;
+	}
+}
+
+void modbus_select_timeout(modbus_t *ctx, int fd) {
+  if (ctx == NULL) {
+      errno = EINVAL;
+      return;
+  }
+
+  ctx->backend->select_timeout(ctx, fd);
+
+	switch(ctx->async_state) {
+		case ASYNC_STATE_CONNECTING:
+			if(ctx->connected_cb)
+				ctx->connected_cb(ctx,-1);	
+		case ASYNC_STATE_SENDING_REQUEST:
+		case ASYNC_STATE_SENDING_RESPONSE:
+		case ASYNC_STATE_RECEIVING_INDICATION:
+		case ASYNC_STATE_RECEIVING_CONFIRMATION:
+      _modbus_read_write_cb(ctx,-1);
+			break;
+			
+		default:
+			break;		
+	}
+	ctx->async_state = ASYNC_STATE_DISCONNECTED;
 }
 
 /* Allocates 4 arrays to store bits, input bits, registers and inputs

@@ -233,6 +233,40 @@ MODBUS_API int modbus_reply_exception(modbus_t *ctx, const uint8_t *req,
                                       unsigned int exception_code);
 
 /**
+ * ASYNC FUNCTIONS
+ **/
+typedef void (*connected_cb_t)(modbus_t *, int);
+typedef void (*read_cb_t)(modbus_t *, int);
+typedef void (*write_cb_t)(modbus_t *, int);
+typedef modbus_mapping_t *(*indication_cb_t)(modbus_t *, const uint8_t *req, int req_length);
+typedef void (*add_watch_cb_t)(modbus_t *, int socket, int flags);
+typedef void (*remove_watch_cb_t)(modbus_t *, int socket, int flags);
+
+MODBUS_API void modbus_set_add_watch_cb(modbus_t *ctx, add_watch_cb_t cb);
+MODBUS_API void modbus_set_remove_watch_cb(modbus_t *ctx, remove_watch_cb_t cb);
+MODBUS_API void modbus_set_connected_cb(modbus_t *ctx, connected_cb_t cb);
+MODBUS_API void modbus_set_read_cb(modbus_t *ctx, read_cb_t cb);
+MODBUS_API void modbus_set_write_cb(modbus_t *ctx, write_cb_t cb);
+MODBUS_API void modbus_set_indication_cb(modbus_t *ctx, indication_cb_t cb);
+
+MODBUS_API int modbus_connect_async(modbus_t *ctx);
+MODBUS_API int modbus_listen_async(modbus_t *ctx, int nb_connection);
+MODBUS_API int modbus_read_registers_async(modbus_t *ctx, int addr, int nb, uint16_t *dest);
+MODBUS_API int modbus_write_registers_async(modbus_t *ctx, int addr, int nb, const uint16_t *data);
+
+/* to be called by external select() */
+MODBUS_API void modbus_selected(modbus_t *ctx, int fd, int flag);
+MODBUS_API void modbus_select_timeout(modbus_t *ctx, int fd);
+
+/**
+ * SELECT FLAGS
+ **/
+ 
+#define MODBUS_SELECT_READ (1<<0)
+#define MODBUS_SELECT_WRITE (1<<1)
+#define MODBUS_SELECT_ERROR (1<<2)
+
+/**
  * UTILS FUNCTIONS
  **/
 

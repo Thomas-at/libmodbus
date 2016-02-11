@@ -39,6 +39,23 @@ MODBUS_BEGIN_DECLS
 #define _RESPONSE_TIMEOUT    500000
 #define _BYTE_TIMEOUT        500000
 
+/* state machine for asynchronous operation */
+typedef enum {
+	ASYNC_STATE_DISCONNECTED=0,
+	ASYNC_STATE_CONNECTING,
+	ASYNC_STATE_CONNECTED,
+	ASYNC_STATE_LISTENING,
+	ASYNC_STATE_SENDING_REQUEST,
+	ASYNC_STATE_RECEIVING_INDICATION,
+	ASYNC_STATE_SENDING_RESPONSE,
+	ASYNC_STATE_RECEIVING_CONFIRMATION
+} modbus_async_state_t;
+
+typedef enum {
+	ASYNC_READ,
+	ASYNC_WRITE
+} modbus_async_rw_t;
+
 typedef enum {
     _MODBUS_BACKEND_TYPE_RTU=0,
     _MODBUS_BACKEND_TYPE_TCP
@@ -64,6 +81,16 @@ typedef struct _sft {
     int t_id;
 } sft_t;
 
+/* Max between RTU and TCP max adu length (so TCP) */
+#define MAX_MESSAGE_LENGTH 260
+
+/* 3 steps are used to parse the query */
+typedef enum {
+    _STEP_FUNCTION,
+    _STEP_META,
+    _STEP_DATA
+} _step_t;
+
 typedef struct _modbus_backend {
     unsigned int backend_type;
     unsigned int header_length;
@@ -87,6 +114,13 @@ typedef struct _modbus_backend {
     int (*flush) (modbus_t *ctx);
     int (*select) (modbus_t *ctx, fd_set *rset, struct timeval *tv, int msg_length);
     void (*free) (modbus_t *ctx);
+    int (*connect_async) (modbus_t *ctx);
+    ssize_t (*send_async) (modbus_t *ctx, const uint8_t *req, int req_length);
+    int (*start_receive_msg_async) (modbus_t *ctx);
+    int (*stop_receive_msg_async) (modbus_t *ctx);
+    int (*listen_async) (modbus_t *ctx, int nb_connection);
+    int (*selected) (modbus_t *ctx, int fd, int flag);
+    void (*select_timeout) (modbus_t *ctx, int fd);
 } modbus_backend_t;
 
 struct _modbus {
@@ -100,6 +134,41 @@ struct _modbus {
     struct timeval byte_timeout;
     const modbus_backend_t *backend;
     void *backend_data;
+    /* data for async operation */
+    /* request length */
+    int req_length;
+    /* request data */
+    uint8_t req[MAX_MESSAGE_LENGTH];
+    /* response data */
+    uint8_t rsp[MAX_MESSAGE_LENGTH];
+    /* length of data remaining to be sent after select() write ready */
+    int send_length;
+    /* pointer to data to be sent */
+    const uint8_t *send_ptr;
+    /* length counter for reception, used per step */
+    int length_to_read;
+    /* total length of data received */
+    int msg_length;
+    /* message type to receive */
+    msg_type_t msg_type;
+    /* step of reception */
+    _step_t step;
+    /* pointer to data to be received */
+    uint8_t *recv_ptr;
+    /* pointer to decoded data */
+    uint16_t *dest;
+    /* listen() socket for server connections */
+    int listen_s;
+    /* state */
+    modbus_async_state_t async_state;
+    modbus_async_rw_t async_rw;
+    /* pointers to callback functions */
+    connected_cb_t connected_cb;
+    read_cb_t read_cb;
+    write_cb_t write_cb;
+    indication_cb_t indication_cb;
+    add_watch_cb_t add_watch_cb;
+    remove_watch_cb_t remove_watch_cb;
 };
 
 void _modbus_init_common(modbus_t *ctx);
