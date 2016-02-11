@@ -675,7 +675,6 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
     int slave;
     int function;
     uint16_t address;
-    uint8_t rsp[MAX_MESSAGE_LENGTH];
     int rsp_length = 0;
     sft_t sft;
 
@@ -1082,7 +1081,8 @@ int modbus_reply(modbus_t *ctx, const uint8_t *req,
 {
     uint8_t rsp[MAX_MESSAGE_LENGTH];
 		int rsp_length;
-	int slave = req[offset - 1];
+    int offset = ctx->backend->header_length;
+	  int slave = req[offset - 1];
 		    
     rsp_length = _modbus_compose_reply(ctx, req, req_length, rsp, mb_mapping);
     
