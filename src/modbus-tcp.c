@@ -537,6 +537,8 @@ static void _modbus_tcp_close(modbus_t *ctx)
     if (ctx->s != -1) {
         shutdown(ctx->s, SHUT_RDWR);
         close(ctx->s);
+				if(ctx->remove_watch_cb)
+					ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_READ | MODBUS_SELECT_WRITE | MODBUS_SELECT_ERROR);
         ctx->s = -1;
     }
 }

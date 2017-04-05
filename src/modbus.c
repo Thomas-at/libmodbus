@@ -1799,6 +1799,7 @@ void modbus_close(modbus_t *ctx)
         return;
 
     ctx->backend->close(ctx);
+    ctx->async_state = ASYNC_STATE_DISCONNECTED;    
 }
 
 void modbus_free(modbus_t *ctx)
@@ -2200,7 +2201,7 @@ void modbus_selected(modbus_t *ctx, int fd, int flag) {
 			if(retval < 0) {
 				if(ECONNRESET == errno) {
 					ctx->backend->stop_receive_msg_async(ctx);
-	  			ctx->async_state = ASYNC_STATE_DISCONNECTED;
+	  			ctx->async_state = ASYNC_STATE_LISTENING;
 				} else {
 	  			ctx->async_state = ASYNC_STATE_LISTENING;
 	  		}
