@@ -2064,9 +2064,18 @@ static int _modbus_update_receive_msg_async(modbus_t *ctx)
         }
 
         if (rc == -1) {
-            _error_print(ctx, "read");
- 			     ctx->backend->stop_receive_msg_async(ctx);
-            return -1;
+        		switch(errno) {
+        			case EAGAIN:
+        			case EINTR:
+        				/* pretend that everything's OK */
+        				return 1;
+        				break;
+        			default:
+		            _error_print(ctx, "read");
+		 			  		ctx->backend->stop_receive_msg_async(ctx);
+		            return -1;
+        				break;
+        		}
         }
 
         /* Display the hex code of each character received */
@@ -2221,12 +2230,7 @@ void modbus_selected(modbus_t *ctx, int fd, int flag) {
 		case ASYNC_STATE_RECEIVING_CONFIRMATION:
 			retval = _modbus_update_receive_msg_async(ctx);
 			if(retval < 0) {
-				if(ECONNRESET == errno) {
-					ctx->backend->stop_receive_msg_async(ctx);
-	  			ctx->async_state = ASYNC_STATE_DISCONNECTED;
-				} else {
-		  		ctx->async_state = ASYNC_STATE_CONNECTED;
-				}
+  			ctx->async_state = ASYNC_STATE_DISCONNECTED;
 	      _modbus_read_write_cb(ctx,-1);
 			}
 			if(!retval) {
