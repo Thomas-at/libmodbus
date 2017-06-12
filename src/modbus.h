@@ -239,7 +239,7 @@ typedef void (*connected_cb_t)(modbus_t *, int);
 typedef void (*read_cb_t)(modbus_t *, int);
 typedef void (*write_cb_t)(modbus_t *, int);
 typedef modbus_mapping_t *(*indication_cb_t)(modbus_t *, const uint8_t *req, int req_length);
-typedef void (*indication_complete_cb_t)(modbus_t *, int status, int slave, int function, uint16_t address);
+typedef void (*indication_complete_cb_t)(modbus_t *, int status, const uint8_t *req, int req_length);
 typedef void (*add_watch_cb_t)(modbus_t *, int socket, int flags);
 typedef void (*remove_watch_cb_t)(modbus_t *, int socket, int flags);
 

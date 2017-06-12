@@ -2226,22 +2226,13 @@ void modbus_selected(modbus_t *ctx, int fd, int flag) {
     		if(ctx->backend->check_integrity(ctx, ctx->req, ctx->msg_length) != -1) {
     			/* complete indication is now in ctx->req, so tell the client */
     			modbus_mapping_t *map = NULL;
-			    int offset;
-			    int slave;
-			    int function;
-			    uint16_t address;
-    			
-			    offset = ctx->backend->header_length;
-			    slave = ctx->req[offset - 1];
-			    function = ctx->req[offset];
-			    address = (ctx->req[offset + 1] << 8) + ctx->req[offset + 2];
 
    				if(ctx->indication_cb) {
     				map = ctx->indication_cb(ctx, ctx->req, ctx->msg_length);
 					}
 					retval = _modbus_reply_async(ctx, ctx->req, ctx->msg_length, map);
 					if(ctx->indication_complete_cb) {
-						ctx->indication_complete_cb(ctx, retval, slave, function, address);
+						ctx->indication_complete_cb(ctx, retval, ctx->req, ctx->msg_length);
 					}
     		}
 			}
