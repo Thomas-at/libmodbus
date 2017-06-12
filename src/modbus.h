@@ -239,6 +239,7 @@ typedef void (*connected_cb_t)(modbus_t *, int);
 typedef void (*read_cb_t)(modbus_t *, int);
 typedef void (*write_cb_t)(modbus_t *, int);
 typedef modbus_mapping_t *(*indication_cb_t)(modbus_t *, const uint8_t *req, int req_length);
+typedef void (*indication_complete_cb_t)(modbus_t *, int status, int slave, int function, uint16_t address);
 typedef void (*add_watch_cb_t)(modbus_t *, int socket, int flags);
 typedef void (*remove_watch_cb_t)(modbus_t *, int socket, int flags);
 
@@ -248,6 +249,7 @@ MODBUS_API void modbus_set_connected_cb(modbus_t *ctx, connected_cb_t cb);
 MODBUS_API void modbus_set_read_cb(modbus_t *ctx, read_cb_t cb);
 MODBUS_API void modbus_set_write_cb(modbus_t *ctx, write_cb_t cb);
 MODBUS_API void modbus_set_indication_cb(modbus_t *ctx, indication_cb_t cb);
+MODBUS_API void modbus_set_indication_complete_cb(modbus_t *ctx, indication_complete_cb_t cb);
 
 MODBUS_API int modbus_connect_async(modbus_t *ctx);
 MODBUS_API int modbus_listen_async(modbus_t *ctx, int nb_connection);

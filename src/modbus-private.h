@@ -167,6 +167,7 @@ struct _modbus {
     read_cb_t read_cb;
     write_cb_t write_cb;
     indication_cb_t indication_cb;
+    indication_complete_cb_t indication_complete_cb;
     add_watch_cb_t add_watch_cb;
     remove_watch_cb_t remove_watch_cb;
 };

@@ -1672,6 +1672,7 @@ void _modbus_init_common(modbus_t *ctx)
     ctx->read_cb = NULL;
     ctx->write_cb = NULL;
     ctx->indication_cb = NULL;
+    ctx->indication_complete_cb = NULL;
     ctx->add_watch_cb = NULL;
     ctx->remove_watch_cb = NULL;
 }
@@ -1839,6 +1840,10 @@ void modbus_set_write_cb(modbus_t *ctx, write_cb_t cb){
 
 void modbus_set_indication_cb(modbus_t *ctx, indication_cb_t cb){
 	ctx->indication_cb = cb;
+}
+
+void modbus_set_indication_complete_cb(modbus_t *ctx, indication_complete_cb_t cb){
+	ctx->indication_complete_cb = cb;
 }
 
 void modbus_set_add_watch_cb(modbus_t *ctx, add_watch_cb_t cb) {
@@ -2220,9 +2225,23 @@ void modbus_selected(modbus_t *ctx, int fd, int flag) {
 				/* reception complete */
     		if(ctx->backend->check_integrity(ctx, ctx->req, ctx->msg_length) != -1) {
     			/* complete indication is now in ctx->req, so tell the client */
-    			if(ctx->indication_cb) {
-    				modbus_mapping_t *map = ctx->indication_cb(ctx, ctx->req, ctx->msg_length);
-    				retval = _modbus_reply_async(ctx, ctx->req, ctx->msg_length, map);
+    			modbus_mapping_t *map = NULL;
+			    int offset;
+			    int slave;
+			    int function;
+			    uint16_t address;
+    			
+			    offset = ctx->backend->header_length;
+			    slave = ctx->req[offset - 1];
+			    function = ctx->req[offset];
+			    address = (ctx->req[offset + 1] << 8) + ctx->req[offset + 2];
+
+   				if(ctx->indication_cb) {
+    				map = ctx->indication_cb(ctx, ctx->req, ctx->msg_length);
+					}
+					retval = _modbus_reply_async(ctx, ctx->req, ctx->msg_length, map);
+					if(ctx->indication_complete_cb) {
+						ctx->indication_complete_cb(ctx, retval, slave, function, address);
 					}
     		}
 			}
