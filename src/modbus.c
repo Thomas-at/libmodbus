@@ -692,6 +692,13 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
     sft.function = function;
     sft.t_id = ctx->backend->prepare_response_tid(req, &req_length);
 
+		/* if mapping is NULL, fail cleanly as if no data is available */
+		if(!mb_mapping) {
+			rsp_length = response_exception(ctx, &sft,
+                                      MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS,
+                                      rsp);
+			goto response_end;
+		}
     /* Data are flushed on illegal number of values errors. */
     switch (function) {
     case MODBUS_FC_READ_COILS: {
@@ -1071,6 +1078,7 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
         break;
     }
 
+response_end:
     return rsp_length;
 }
 
@@ -2226,13 +2234,15 @@ void modbus_selected(modbus_t *ctx, int fd, int flag) {
     		if(ctx->backend->check_integrity(ctx, ctx->req, ctx->msg_length) != -1) {
     			/* complete indication is now in ctx->req, so tell the client */
     			modbus_mapping_t *map = NULL;
-
+					int status = 0;
+					const int offset = ctx->backend->header_length;
    				if(ctx->indication_cb) {
     				map = ctx->indication_cb(ctx, ctx->req, ctx->msg_length);
 					}
 					retval = _modbus_reply_async(ctx, ctx->req, ctx->msg_length, map);
+					status = ctx->rsp[offset];
 					if(ctx->indication_complete_cb) {
-						ctx->indication_complete_cb(ctx, retval, ctx->req, ctx->msg_length);
+						ctx->indication_complete_cb(ctx, status, ctx->req, ctx->msg_length);
 					}
     		}
 			}
