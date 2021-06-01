@@ -1,8 +1,86 @@
-libmodbus 3.1.3 (XXXX-XX-XX)
+libmodbus 3.1.6 (2019-07-31)
 ============================
 
-- Introduce offsets in modbus mappings.
-- Add some more macros for data manipulation.
+- Fix awful typo in fix for VD-1301 vulnerability.
+  Thank you @karlp.
+
+libmodbus 3.1.5 (2019-07-29)
+============================
+
+- Fix URL
+- Add appveyor.com config
+- Update libmodbus.txt
+- Change arg value from int to const uint16_t in modbus_write_register
+- Mark raw_req argument as const in modbus_send_raw_request (closes #479)
+- Add unit tests for VD-1301 and VD-1302 vulnerabilities
+- Fix VD-1301 and VD-1302 vulnerabilities
+- Create CODE_OF_CONDUCT.md
+- modbus_mapping_t is now a named typedef (to allow forward declaration)
+- Rename type as flags for consistency between functions
+- Add missing SOCK_CLOEXEC flag on socket creation
+- Remove wrong and harmful checks in configure.ac
+- Oops fix OR on RS485 settings (1c5d969)
+- Only set SER_RS485_ENABLED bit of existing RS485 settings
+- Add .vscode/ to .gitignore
+- Fix wrong function name
+- Remove a duplicated semi-colon
+- Fix a small typo in test message
+- Fix modbus_reply for TCP when unit id == 0 (fixes #376)
+- New functions to define the indication timeout (#95)
+- Remove CYGWIN condition to provide bswap16 fallback (#383)
+- typo fix
+- Use builtin bswap16 of gcc 4.8 (#377)
+- Handle out-of-memory conditions more gracefully
+- [doc] Add entry points for accept/listen in libmodbus index
+- Fix typo
+- Refine issue template for Github
+- Move WINVER definition before other includes (#350)
+- Add new function modbus_get_slave()
+- Fix LIBMODBUS_VERSION_HEX encoding (closes #345)
+- tcp_modbus_accept mustn't close socket on error (closes #333)
+
+libmodbus 3.1.4 (2016-05-28)
+============================
+
+- C_PROG_RANLIB is rendered obsolete by LT_INIT
+- Improve ifdef around bswap_16 for __CYGWIN__
+- Improve Cygwin support. Thanks to StalderT.
+- Another round of DRY in modbus_reply()
+- Rename raw_rep to raw_rsp in unit-test-client
+- Fix wrong function name in debug message
+- Fix handling of invalid function code (closes #315)
+- Add debug message on unknown function and new unit test
+- DRY in modbus_reply by improving response_exception()
+- Fix typo in 3053bd0adb
+- CID 69145 - Argument cannot be negative in unit-test-server
+- CID 69142 - Unchecked return value in unit-test-server
+- Fix CID 69140 - Bad bit shift operation (coverity) in tests
+- Rewrite and rename README as README.md in tests/
+- Github's contributing and issue template files
+- Fix small leak (64 bytes in TCP) in unit-test-client
+- Add unit-tests.sh to tarball
+- Add ./configure.scan to .gitignore
+- Move setting of option inside the relevant conditional group
+- Add links to new modbus_*_float_* functions in index
+- Slight change to modbus_report_slave_id doc.
+
+libmodbus 3.1.3 (2016-05-11)
+============================
+
+- New bswap macros for Max OSX by Jakob Bysewski.
+- Fix "wildcard address" in TCP IPv6 by Shoichi Sakane.
+- Introduce offsets in modbus mappings with modbus_mapping_new_start_address.
+  Thanks to Michael Heimpold and Stéphane Raimbault.
+- Fix address range in random-test-client.
+  Thanks to Martin Galvan.
+- Add an option to disable tests compilation by Yegor Yefremov.
+- Define MSG_DONTWAIT to MSG_NONBLOCK on AIX (#294).
+  Thanks to Fabrice Cantos.
+- Fix building when byteswap.h is not defined by Tomasz Mon.
+- Add some more macros for data manipulation and documentation.
+- Remove duplicate install of modbus.h (closes #290).
+  Thanks to Daniel Sutcliffe.
+- Move MIGRATION and README.md to dist_doc_DATA target.
 - Change order of few functions in modbus RTU code.
 - Add entries for modbus_rtu_[get|set]_delay in documentation index.
 - Implemented runtime configurable RTS delay by Jimmy Bergström.
@@ -12,7 +90,7 @@ libmodbus 3.1.3 (XXXX-XX-XX)
 - Added ILLEGAL_DATA_ADDRESS tests for modbus_write_register[|s].
   Thanks to Andrey Skvortsov.
 - Update documentation of modbus_rtu_set_rts
-- fix rts signal switch time by Hiromasa Ihara.
+- Fix rts signal switch time by Hiromasa Ihara.
 - Improve new_rtu and set_slave documentation (related to #276).
 - Fix late check of ctx in modbus_reply[|_exception] (closes #269).
 - Wait the server for 1 second before running tests (help Travis).
@@ -345,7 +423,7 @@ libmodbus 2.1.0 (2010-03-24)
 - Fix report slave ID request
   Patch (bzr) provided by Paul Fertser.
 - Fix #425604 - Conditional jump or move depends on uninitialised value(s)
-  Occurs on first occurence of slave timeout.
+  Occurs on first occurrence of slave timeout.
   Reported by Henrik Munktell.
 - Fix #457200 - FreeBSD support
   Patch provided by Norbert Koch.
