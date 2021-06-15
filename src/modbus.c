@@ -1903,14 +1903,68 @@ static int read_registers_async(modbus_t *ctx, int function, int addr, int nb,
     return rc;
 }
 
+/* Reads IO status */
+static int read_io_status_async(modbus_t *ctx, int function,
+                          int addr, int nb, uint8_t *dest)
+{
+	if(ctx == NULL || dest == NULL)
+	{
+		errno = EINVAL;
+		return -1;
+	}
+    if (ctx->async_state < ASYNC_STATE_CONNECTED) {
+    	errno = ENOTCONN;
+    	return -1;
+    }
+    if(ctx->async_state > ASYNC_STATE_CONNECTED) {
+    	errno = EBUSY;
+    	return -1;
+    }
 
+    if (nb > MODBUS_MAX_READ_BITS) {
+        if (ctx->debug) {
+            fprintf(stderr,
+                    "ERROR Too many discrete inputs requested (%d > %d)\n",
+                    nb, MODBUS_MAX_READ_BITS);
+        }
+        errno = EMBMDATA;
+        return -1;
+    }
+
+    int rc;
+    ctx->req_length = ctx->backend->build_request_basis(ctx, function, addr, nb, ctx->req);
+	ctx->dest = dest;
+	ctx->async_state = ASYNC_STATE_SENDING_REQUEST;
+	ctx->async_rw = ASYNC_READ;
+	rc = send_msg_async(ctx, ctx->req, ctx->req_length);
+
+	return rc;
+}
+
+int modbus_read_bits_async(modbus_t *ctx, int addr, int nb, uint8_t* dest)
+{
+	int rc = read_io_status_async(ctx, MODBUS_FC_READ_COILS, addr, nb, dest);
+	if(rc == -1)
+		return rc;
+	else
+		return nb;
+}
+
+int modbus_read_input_bits_async(modbus_t *ctx, int addr, int nb, uint8_t* dest)
+{
+	int rc = read_io_status_async(ctx, MODBUS_FC_READ_DISCRETE_INPUTS, addr, nb, dest);
+	if(rc == -1)
+		return rc;
+	else
+		return nb;
+}
 /* Reads the holding registers of remote device and put the data into an
    array */
 int modbus_read_registers_async(modbus_t *ctx, int addr, int nb, uint16_t *dest)
 {
     int status;
 
-    if (ctx == NULL) {
+    if (ctx == NULL || dest == NULL) {
         errno = EINVAL;
         return -1;
     }
@@ -1938,12 +1992,131 @@ int modbus_read_registers_async(modbus_t *ctx, int addr, int nb, uint16_t *dest)
     return status;
 }
 
+int modbus_read_input_registers_async(modbus_t *ctx, int addr, int nb, uint16_t *dest)
+{
+    int status;
+
+    if (ctx == NULL || dest == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ctx->async_state < ASYNC_STATE_CONNECTED) {
+    	errno = ENOTCONN;
+    	return -1;
+    }
+    if(ctx->async_state > ASYNC_STATE_CONNECTED) {
+    	errno = EBUSY;
+    	return -1;
+    }
+
+    if (nb > MODBUS_MAX_READ_REGISTERS) {
+        if (ctx->debug) {
+            fprintf(stderr,
+                    "ERROR Too many registers requested (%d > %d)\n",
+                    nb, MODBUS_MAX_READ_REGISTERS);
+        }
+        errno = EMBMDATA;
+        return -1;
+    }
+
+    status = read_registers_async(ctx, MODBUS_FC_READ_INPUT_REGISTERS,
+                            addr, nb, dest);
+    return status;
+}
+
+/* Asynchronous write a value to the specified register of the remote device.
+   Used by write_bit_async and write_register_async */
+static int write_single_async(modbus_t *ctx, int function, int addr, const uint16_t value)
+{
+	if (ctx == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+    if (ctx->async_state < ASYNC_STATE_CONNECTED) {
+    	errno = ENOTCONN;
+    	return -1;
+    }
+    if(ctx->async_state > ASYNC_STATE_CONNECTED) {
+    	errno = EBUSY;
+    	return -1;
+    }
+
+    ctx->req_length = ctx->backend->build_request_basis(ctx, function, addr, (int) value, ctx->req);
+    ctx->async_state = ASYNC_STATE_SENDING_REQUEST;
+	ctx->async_rw = ASYNC_WRITE;
+    return send_msg_async(ctx, ctx->req, ctx->req_length);
+}
+
+int modbus_write_bit_async(modbus_t *ctx, int addr, const int status)
+{
+	return write_single_async(ctx, MODBUS_FC_WRITE_SINGLE_COIL, addr,
+			status ? 0xFF00 : 0);
+}
+
+int modbus_write_register_async(modbus_t *ctx, int addr, const uint16_t value)
+{
+	return write_single_async(ctx, MODBUS_FC_WRITE_SINGLE_REGISTER, addr, value);
+}
+
+int modbus_write_bits_async(modbus_t *ctx, int addr, int nb, const uint8_t *src)
+{
+	int i, byte_count, bit_check = 0, pos = 0;
+
+	if (ctx == NULL || src == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+   if (ctx->async_state < ASYNC_STATE_CONNECTED) {
+		errno = ENOTCONN;
+		return -1;
+	}
+	if(ctx->async_state > ASYNC_STATE_CONNECTED) {
+		errno = EBUSY;
+		return -1;
+	}
+
+    if (nb > MODBUS_MAX_WRITE_BITS) {
+        if (ctx->debug) {
+            fprintf(stderr, "ERROR Writing too many bits (%d > %d)\n",
+                    nb, MODBUS_MAX_WRITE_BITS);
+        }
+        errno = EMBMDATA;
+        return -1;
+    }
+
+    ctx->req_length = ctx->backend->build_request_basis(ctx,
+                                                   MODBUS_FC_WRITE_MULTIPLE_COILS,
+                                                   addr, nb, ctx->req);
+    byte_count = (nb / 8) + ((nb % 8) ? 1 : 0);
+    ctx->req[ctx->req_length++] = byte_count;
+
+    for (i = 0; i < byte_count; i++) {
+        int bit;
+
+        bit = 0x01;
+        ctx->req[ctx->req_length] = 0;
+
+        while ((bit & 0xFF) && (bit_check++ < nb)) {
+            if (src[pos++])
+                ctx->req[ctx->req_length] |= bit;
+            else
+                ctx->req[ctx->req_length] &=~ bit;
+
+            bit = bit << 1;
+        }
+        ctx->req_length++;
+    }
+	ctx->async_state = ASYNC_STATE_SENDING_REQUEST;
+	ctx->async_rw = ASYNC_WRITE;
+    return send_msg_async(ctx, ctx->req, ctx->req_length);
+}
+
 /* Write the values from the array to the registers of the remote device */
 int modbus_write_registers_async(modbus_t *ctx, int addr, int nb, const uint16_t *src)
 {
     int i, byte_count;
 
-    if (ctx == NULL) {
+    if (ctx == NULL || src == NULL) {
         errno = EINVAL;
         return -1;
     }
@@ -2113,6 +2286,48 @@ static void _modbus_read_write_cb(modbus_t *ctx, int status) {
 	}
 }
 
+static int _modbus_save_read_response(modbus_t* ctx, int rc)
+{
+	int function = ctx->rsp[ctx->backend->header_length];
+	switch(function) {
+		case MODBUS_FC_READ_INPUT_REGISTERS:
+		case MODBUS_FC_READ_HOLDING_REGISTERS: {
+			uint16_t* dest = ctx->dest;
+
+			int offset = ctx->backend->header_length;
+			for (int i = 0; i < rc; i++) {
+			/* shift reg hi_byte to temp OR with lo_byte */
+				dest[i] = (ctx->rsp[offset + 2 + (i << 1)] << 8) |
+						ctx->rsp[offset + 3 + (i << 1)];
+			}
+			break;
+		}
+		case MODBUS_FC_READ_COILS:
+		case MODBUS_FC_READ_DISCRETE_INPUTS: {
+			uint8_t* dest = ctx->dest;
+			int offset = ctx->backend->header_length + 2;
+			int offset_nb = ctx->backend->header_length;
+			int offset_end = offset + rc;
+			int nb = (ctx->req[offset_nb + 3] << 8) | ctx->req[offset_nb + 4];
+			int i, temp, bit, pos = 0;
+			for (i = offset; i < offset_end; i++) {
+				/* Shift reg hi_byte to temp */
+				temp = ctx->rsp[i];
+
+				for (bit = 0x01; (bit & 0xff) && (pos < nb);) {
+					dest[pos++] = (temp & bit) ? TRUE : FALSE;
+					bit = bit << 1;
+				}
+
+			}
+			break;
+		}
+		default:
+			return -1;
+	}
+	return 0;
+}
+
 void modbus_selected(modbus_t *ctx, int fd, int flag) {
 	int retval;
 	
@@ -2210,22 +2425,16 @@ void modbus_selected(modbus_t *ctx, int fd, int flag) {
 	      _modbus_read_write_cb(ctx,-1);
 			}
 			if(!retval) {
-				int offset, i;
 				/* reception complete */
         ctx->async_state = ASYNC_STATE_CONNECTED;
         retval = check_confirmation(ctx, ctx->req, ctx->rsp, ctx->msg_length);
         if(retval == -1) {
 	        _modbus_read_write_cb(ctx,-1);
         } else {
-	        offset = ctx->backend->header_length;
-					if(ctx->async_rw == ASYNC_READ) {
-		        for (i = 0; i < retval; i++) {
-		            /* shift reg hi_byte to temp OR with lo_byte */
-		            ctx->dest[i] = (ctx->rsp[offset + 2 + (i << 1)] << 8) |
-		                ctx->rsp[offset + 3 + (i << 1)];
-		        }
-		      }
-	        _modbus_read_write_cb(ctx,0);
+        	if(ctx->async_rw == ASYNC_READ) {
+        		_modbus_save_read_response(ctx, retval);
+        	}
+	        _modbus_read_write_cb(ctx, 0);
 	      }
 			}		
 			break;

@@ -157,7 +157,7 @@ struct _modbus {
     /* pointer to data to be received */
     uint8_t *recv_ptr;
     /* pointer to decoded data */
-    uint16_t *dest;
+    void *dest;
     /* listen() socket for server connections */
     int listen_s;
     /* state */

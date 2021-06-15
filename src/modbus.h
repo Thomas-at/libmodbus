@@ -259,7 +259,13 @@ MODBUS_API void modbus_set_indication_complete_cb(modbus_t *ctx, indication_comp
 
 MODBUS_API int modbus_connect_async(modbus_t *ctx);
 MODBUS_API int modbus_listen_async(modbus_t *ctx, int nb_connection);
+MODBUS_API int modbus_read_bits_async(modbus_t *ctx, int addr, int nb, uint8_t* dest);
+MODBUS_API int modbus_read_input_bits_async(modbus_t *ctx, int addr, int nb, uint8_t* dest);
 MODBUS_API int modbus_read_registers_async(modbus_t *ctx, int addr, int nb, uint16_t *dest);
+MODBUS_API int modbus_read_input_registers_async(modbus_t *ctx, int addr, int nb, uint16_t *dest);
+MODBUS_API int modbus_write_bit_async(modbus_t *ctx, int addr, const int status);
+MODBUS_API int modbus_write_register_async(modbus_t *ctx, int addr, const uint16_t value);
+MODBUS_API int modbus_write_bits_async(modbus_t *ctx, int addr, int nb, const uint8_t *data);
 MODBUS_API int modbus_write_registers_async(modbus_t *ctx, int addr, int nb, const uint16_t *data);
 
 /* to be called by external select() */
