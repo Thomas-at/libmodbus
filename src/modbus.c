@@ -1789,7 +1789,7 @@ int modbus_set_debug(modbus_t *ctx, int flag)
 /**
  * ASYNC FUNCTIONS
  **/
- 
+
 void modbus_set_connected_cb(modbus_t *ctx, connected_cb_t cb) {
 	ctx->connected_cb = cb;
 }
@@ -2328,6 +2328,18 @@ static int _modbus_save_read_response(modbus_t* ctx, int rc)
 	return 0;
 }
 
+/* sets accepted socket for server, client communication */
+int modbus_set_async_server_connection(modbus_t *ctx, int s) {
+    if(ctx == NULL || s == -1) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ctx->s = s;
+    ctx->async_state = ASYNC_STATE_RECEIVING_INDICATION;
+    return _modbus_start_receive_msg_async(ctx, ctx->req, MSG_INDICATION);
+}
+
 void modbus_selected(modbus_t *ctx, int fd, int flag) {
 	int retval;
 	
@@ -2384,10 +2396,27 @@ void modbus_selected(modbus_t *ctx, int fd, int flag) {
 	    break;
 		case ASYNC_STATE_SENDING_RESPONSE:
 			/* assume the client is still connected so we're ready for another indication */
-  		ctx->async_state = ASYNC_STATE_RECEIVING_INDICATION;
-    	if(_modbus_start_receive_msg_async(ctx, ctx->req, MSG_INDICATION)) {
-    		ctx->async_state = ASYNC_STATE_LISTENING;
-    	}
+        if(retval == -1) {
+            _error_print(ctx, NULL);
+            if(ctx->connected_cb)
+                ctx->connected_cb(ctx, -1);
+            ctx->async_state = ASYNC_STATE_LISTENING;
+        }
+        else if(retval > 0 && retval != ctx->send_length) {
+            errno = EMBBADDATA;
+            if(ctx->connected_cb)
+                ctx->connected_cb(ctx, -1);
+            ctx->async_state = ASYNC_STATE_LISTENING;
+        }
+        if(retval == ctx->send_length) {
+            ctx->async_state = ASYNC_STATE_RECEIVING_INDICATION;
+            if(_modbus_start_receive_msg_async(ctx, ctx->req, MSG_INDICATION)) {
+                ctx->async_state = ASYNC_STATE_LISTENING;
+                errno = ENOTSOCK;
+                if(ctx->connected_cb)
+                    ctx->connected_cb(ctx, -1);
+            }
+        }
 	   	break;
 		case ASYNC_STATE_RECEIVING_INDICATION:
 			retval = _modbus_update_receive_msg_async(ctx);
@@ -2398,6 +2427,8 @@ void modbus_selected(modbus_t *ctx, int fd, int flag) {
 				} else {
 	  			ctx->async_state = ASYNC_STATE_LISTENING;
 	  		}
+                if(ctx->connected_cb)
+                    ctx->connected_cb(ctx, -1);
 	  		break;
 			}
 			if(!retval) {

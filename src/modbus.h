@@ -249,6 +249,8 @@ typedef void (*indication_complete_cb_t)(modbus_t *, int status, const uint8_t *
 typedef void (*add_watch_cb_t)(modbus_t *, int socket, int flags);
 typedef void (*remove_watch_cb_t)(modbus_t *, int socket, int flags);
 
+MODBUS_API int modbus_set_async_server_connection(modbus_t *ctx, int s);
+
 MODBUS_API void modbus_set_add_watch_cb(modbus_t *ctx, add_watch_cb_t cb);
 MODBUS_API void modbus_set_remove_watch_cb(modbus_t *ctx, remove_watch_cb_t cb);
 MODBUS_API void modbus_set_connected_cb(modbus_t *ctx, connected_cb_t cb);
