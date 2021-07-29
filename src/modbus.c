@@ -754,6 +754,8 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
             rsp[rsp_length++] = (nb / 8) + ((nb % 8) ? 1 : 0);
             rsp_length = response_io_status(tab_bits, mapping_address, nb,
                                             rsp, rsp_length);
+            if(ctx->reply_read_cb)
+                ctx->reply_read_cb(ctx, slave, function, address, nb);
         }
     }
         break;
@@ -788,6 +790,8 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
                 rsp[rsp_length++] = tab_registers[i] >> 8;
                 rsp[rsp_length++] = tab_registers[i] & 0xFF;
             }
+            if(ctx->reply_read_cb)
+            	ctx->reply_read_cb(ctx, slave, function, address, nb);
         }
     }
         break;
@@ -806,6 +810,8 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
                 mb_mapping->tab_bits[mapping_address] = data ? ON : OFF;
                 memcpy(rsp, req, req_length);
                 rsp_length = req_length;
+                if(ctx->reply_write_cb)
+                    ctx->reply_write_cb(ctx, slave, function, address, 1);
             } else {
                 rsp_length = response_exception(
                     ctx, &sft,
@@ -831,6 +837,8 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
             mb_mapping->tab_registers[mapping_address] = data;
             memcpy(rsp, req, req_length);
             rsp_length = req_length;
+            if(ctx->reply_write_cb)
+            	ctx->reply_write_cb(ctx, slave, function, address, 1);
         }
     }
         break;
@@ -863,6 +871,8 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
             /* 4 to copy the bit address (2) and the quantity of bits */
             memcpy(rsp + rsp_length, req + rsp_length, 4);
             rsp_length += 4;
+            if(ctx->reply_write_cb)
+                ctx->reply_write_cb(ctx, slave, function, address, nb);
         }
     }
         break;
@@ -894,6 +904,8 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
             /* 4 to copy the address (2) and the no. of registers */
             memcpy(rsp + rsp_length, req + rsp_length, 4);
             rsp_length += 4;
+            if(ctx->reply_write_cb)
+                ctx->reply_write_cb(ctx, slave, function, address, nb);
         }
     }
         break;
@@ -938,6 +950,8 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
             mb_mapping->tab_registers[mapping_address] = data;
             memcpy(rsp, req, req_length);
             rsp_length = req_length;
+            if(ctx->reply_write_cb)
+                ctx->reply_write_cb(ctx, slave, function, address, 1);
         }
     }
         break;
@@ -977,12 +991,16 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
                 mb_mapping->tab_registers[i] =
                     (req[offset + j] << 8) + req[offset + j + 1];
             }
+            if(ctx->reply_write_cb)
+            	ctx->reply_write_cb(ctx, slave, function, address_write, nb_write);
 
             /* and read the data for the response */
             for (i = mapping_address; i < mapping_address + nb; i++) {
                 rsp[rsp_length++] = mb_mapping->tab_registers[i] >> 8;
                 rsp[rsp_length++] = mb_mapping->tab_registers[i] & 0xFF;
             }
+            if(ctx->reply_read_cb)
+                ctx->reply_read_cb(ctx, slave, function, address, nb);
         }
     }
         break;
@@ -1592,6 +1610,9 @@ void _modbus_init_common(modbus_t *ctx)
     ctx->indication_timeout.tv_sec = 0;
     ctx->indication_timeout.tv_usec = 0;
 
+    ctx->reply_read_cb = NULL;
+    ctx->reply_write_cb = NULL;
+
     /* initialise async state machine */
     ctx->async_state = ASYNC_STATE_DISCONNECTED;
     ctx->async_rw = ASYNC_READ;
@@ -1783,6 +1804,26 @@ int modbus_set_debug(modbus_t *ctx, int flag)
     }
 
     ctx->debug = flag;
+    return 0;
+}
+
+int modbus_set_reply_read_cb(modbus_t *ctx, reply_read_cb_t cb) {
+    if(ctx == NULL || cb == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ctx->reply_read_cb = cb;
+    return 0;
+}
+
+int modbus_set_reply_write_cb(modbus_t *ctx, reply_write_cb_t cb) {
+    if(ctx == NULL || cb == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ctx->reply_write_cb = cb;
     return 0;
 }
 

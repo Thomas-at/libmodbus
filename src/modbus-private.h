@@ -135,6 +135,8 @@ struct _modbus {
     struct timeval indication_timeout;
     const modbus_backend_t *backend;
     void *backend_data;
+    reply_read_cb_t reply_read_cb;
+    reply_write_cb_t reply_write_cb;
     /* data for async operation */
     /* request length */
     int req_length;
