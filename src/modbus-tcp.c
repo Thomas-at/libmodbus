@@ -538,10 +538,10 @@ static int _modbus_tcp_pi_connect(modbus_t *ctx)
 static void _modbus_tcp_close(modbus_t *ctx)
 {
     if (ctx->s != -1) {
+		if(ctx->remove_watch_cb)	//change#1 moved callback upwards to first clear items from interest list  before closing fd (problem with epoll and multithreading)
+			ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_READ | MODBUS_SELECT_WRITE | MODBUS_SELECT_ERROR);
         shutdown(ctx->s, SHUT_RDWR);
         close(ctx->s);
-				if(ctx->remove_watch_cb)
-					ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_READ | MODBUS_SELECT_WRITE | MODBUS_SELECT_ERROR);
         ctx->s = -1;
     }
 }
@@ -987,7 +987,7 @@ const modbus_backend_t _modbus_tcp_pi_backend = {
 
 modbus_t* modbus_new_tcp(const char *ip, int port)
 {
-    modbus_t *ctx;
+	modbus_t *ctx;
     modbus_tcp_t *ctx_tcp;
     size_t dest_size;
     size_t ret_size;
