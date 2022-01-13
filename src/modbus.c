@@ -972,7 +972,7 @@ static int _modbus_compose_reply(modbus_t *ctx, const uint8_t *req, int req_leng
                 nb_write, nb, MODBUS_MAX_WR_WRITE_REGISTERS, MODBUS_MAX_WR_READ_REGISTERS);
         } else if (mapping_address < 0 ||
                    (mapping_address + nb) > mb_mapping->nb_registers ||
-                   mapping_address < 0 ||
+                   mapping_address_write < 0 ||
                    (mapping_address_write + nb_write) > mb_mapping->nb_registers) {
             rsp_length = response_exception(
                 ctx, &sft, MODBUS_EXCEPTION_ILLEGAL_DATA_ADDRESS, rsp, FALSE,
@@ -1170,7 +1170,7 @@ int modbus_read_input_bits(modbus_t *ctx, int addr, int nb, uint8_t *dest)
         return nb;
 }
 
-/* Reads the data from a remove device and put that data into an array */
+/* Reads the data from a remote device and put that data into an array */
 static int read_registers(modbus_t *ctx, int function, int addr, int nb,
                           uint16_t *dest)
 {

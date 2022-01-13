@@ -13,7 +13,7 @@
 #
 m4_define([libmodbus_version_major], [3])
 m4_define([libmodbus_version_minor], [1])
-m4_define([libmodbus_version_micro], [6])
+m4_define([libmodbus_version_micro], [7])
 
 m4_define([libmodbus_release_status],
     [m4_if(m4_eval(libmodbus_version_minor % 2), [1], [snapshot], [release])])
@@ -30,7 +30,7 @@ AC_INIT([libmodbus],
 AC_CONFIG_SRCDIR([src/modbus.c])
 AC_CONFIG_AUX_DIR([build-aux])
 AM_INIT_AUTOMAKE([check-news foreign 1.11 -Wall -Wno-portability silent-rules tar-pax subdir-objects])
-AC_PROG_CC_STDC
+AC_PROG_CC
 AC_USE_SYSTEM_EXTENSIONS
 AC_SYS_LARGEFILE
 AC_CONFIG_MACRO_DIR([m4])
