@@ -514,14 +514,19 @@ static int _modbus_tcp_pi_connect_async(modbus_t *ctx)
         if (ctx->debug) {
             printf("Connecting to [%s]:%s\n", ctx_tcp_pi->node, ctx_tcp_pi->service);
         }
-
+        
+        ctx->s = s;
+        if(ctx->add_watch_cb)
+            ctx->add_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
         rc = _connect_async(s, ai_ptr->ai_addr, ai_ptr->ai_addrlen);
         if (rc == -1) {
+            if(ctx->remove_watch_cb)
+                ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
+            ctx->s = -1;
             close(s);
             continue;
         }
 
-        ctx->s = s;
         break;
     }
 
