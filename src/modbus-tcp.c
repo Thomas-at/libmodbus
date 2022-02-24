@@ -456,6 +456,89 @@ static int _modbus_tcp_connect(modbus_t *ctx)
     return 0;
 }
 
+/* Establishes a modbus TCP PI connection with a Modbus server asynchronously. */
+static int _modbus_tcp_pi_connect_async(modbus_t *ctx)
+{
+    int rc;
+    struct addrinfo *ai_list;
+    struct addrinfo *ai_ptr;
+    struct addrinfo ai_hints;
+    modbus_tcp_pi_t *ctx_tcp_pi = ctx->backend_data;
+
+#ifdef OS_WIN32
+    if (_modbus_tcp_init_win32() == -1) {
+        return -1;
+    }
+#endif
+
+    memset(&ai_hints, 0, sizeof(ai_hints));
+#ifdef AI_ADDRCONFIG
+    ai_hints.ai_flags |= AI_ADDRCONFIG;
+#endif
+    ai_hints.ai_family = AF_UNSPEC;
+    ai_hints.ai_socktype = SOCK_STREAM;
+    ai_hints.ai_addr = NULL;
+    ai_hints.ai_canonname = NULL;
+    ai_hints.ai_next = NULL;
+
+    ai_list = NULL;
+    rc = getaddrinfo(ctx_tcp_pi->node, ctx_tcp_pi->service,
+                     &ai_hints, &ai_list);
+    if (rc != 0) {
+        if (ctx->debug) {
+            fprintf(stderr, "Error returned by getaddrinfo: %s\n", gai_strerror(rc));
+        }
+        errno = ECONNREFUSED;
+        return -1;
+    }
+
+    for (ai_ptr = ai_list; ai_ptr != NULL; ai_ptr = ai_ptr->ai_next) {
+        int flags = ai_ptr->ai_socktype;
+        int s;
+
+#ifdef SOCK_CLOEXEC
+        flags |= SOCK_CLOEXEC;
+#endif
+
+#ifdef SOCK_NONBLOCK
+        flags |= SOCK_NONBLOCK;
+#endif
+
+        s = socket(ai_ptr->ai_family, flags, ai_ptr->ai_protocol);
+        if (s < 0)
+            continue;
+
+        if (ai_ptr->ai_family == AF_INET)
+            _modbus_tcp_set_ipv4_options(s);
+
+        if (ctx->debug) {
+            printf("Connecting to [%s]:%s\n", ctx_tcp_pi->node, ctx_tcp_pi->service);
+        }
+        
+        ctx->s = s;
+        if(ctx->add_watch_cb)
+            ctx->add_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
+        rc = _connect_async(s, ai_ptr->ai_addr, ai_ptr->ai_addrlen);
+        if (rc == -1) {
+            if(ctx->remove_watch_cb)
+                ctx->remove_watch_cb(ctx, ctx->s, MODBUS_SELECT_WRITE);
+            ctx->s = -1;
+            close(s);
+            continue;
+        }
+
+        break;
+    }
+
+    freeaddrinfo(ai_list);
+
+    if (ctx->s < 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
 /* Establishes a modbus TCP PI connection with a Modbus server. */
 static int _modbus_tcp_pi_connect(modbus_t *ctx)
 {
@@ -982,7 +1065,14 @@ const modbus_backend_t _modbus_tcp_pi_backend = {
     _modbus_tcp_close,
     _modbus_tcp_flush,
     _modbus_tcp_select,
-    _modbus_tcp_free
+    _modbus_tcp_free,
+    _modbus_tcp_pi_connect_async,
+    _modbus_tcp_send_async,
+    _modbus_tcp_start_receive_msg_async,
+    _modbus_tcp_stop_receive_msg_async,
+    _modbus_tcp_listen_async,
+    _modbus_tcp_selected,
+    _modbus_tcp_select_timeout
 };
 
 modbus_t* modbus_new_tcp(const char *ip, int port)
